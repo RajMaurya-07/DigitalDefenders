@@ -1,10 +1,80 @@
+'use client';
 import Sidebar from "../../components/Sidebar";
-
-export const metadata = {
-  title: "Media Assets | GuardianAI",
-};
+import { useState, useEffect, useRef } from "react";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "../../lib/firebase";
+import Link from "next/link";
 
 export default function MediaPage() {
+  const [state, setState] = useState('media');
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const inputRef = useRef(null);
+  const playerRef = useRef();
+  const [players, setPlayers] = useState([]);
+  const [footprints, setFootprints] = useState([]);
+  const [name, setName] = useState('');
+
+  // TRIGGER SELECT INPUT
+  const handleInput = () => {
+    inputRef.current.click(); // 🔥 trigger input
+  };
+
+  // SET PREVIEW ON FILE CHANGE
+  useEffect(() => {
+    if (!file) return;
+
+    const objectUrl = URL.createObjectURL(file);
+    setPreview(objectUrl);
+
+    return () => URL.revokeObjectURL(objectUrl); // cleanup
+  }, [file]);
+
+  // SELECT PLAYER IMAGE
+  const handleFileChange = () => { }
+
+  // SUBMIT TO MAKE DIGITAL FOOTPRINT
+  const handleSubmit = async () => {
+    if (!file || !name) return;
+    setState('loading');
+
+    const formData = new FormData();
+    formData.append("image", file);
+    formData.append("name", name);
+
+    try {
+      const res = await fetch("http://localhost:8000/create-embedding", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      console.log(data);
+
+      setState('media'); // success screen
+    } catch (err) {
+      console.error(err);
+      setState('upload');
+    }
+
+  }
+
+  // FETCH ASSETS FROM FIRESTORE
+  useEffect(() => {
+    const fetchFootprints = async () => {
+      const querySnapshot = await getDocs(collection(db, "footprints"));
+
+      const data = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      setFootprints(data);
+    };
+
+    fetchFootprints();
+  }, []);
+
   return (
     <div className="flex min-h-screen">
       <Sidebar />
@@ -16,21 +86,111 @@ export default function MediaPage() {
             </h1>
             <p className="text-slate-400 mt-1">Manage and review your hashed official digital assets.</p>
           </div>
-          <button className="bg-gradient-to-br from-cyan-400 to-blue-500 text-black font-bold px-6 py-2 rounded-lg cursor-pointer transition-all hover:shadow-[0_4px_15px_rgba(34,211,238,0.3)]">
+          <button
+            className="bg-gradient-to-br from-cyan-400 to-blue-500 text-black font-bold px-6 py-2 rounded-lg cursor-pointer transition-all hover:shadow-[0_4px_15px_rgba(34,211,238,0.3)]"
+            type="button"
+            onClick={() => setState('upload')}
+          >
             Upload New Asset
           </button>
         </header>
 
-        <div className="flex-1 bg-[#0f172a]/60 backdrop-blur-[12px] border border-white/10 rounded-2xl p-12 flex flex-col items-center justify-center text-center shadow-[0_8px_32px_0_rgba(0,0,0,0.3)]">
-          <div className="w-20 h-20 bg-cyan-400/10 text-cyan-400 rounded-full flex items-center justify-center mb-6 border border-cyan-400/20">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+        {/* MAIN BODY */}
+
+        {(state == 'upload') ? (
+          <div className="flex-1 bg-[#0f172a]/60 backdrop-blur-[12px] border border-white/10 rounded-2xl p-12 flex flex-col items-center justify-center text-center shadow-[0_8px_32px_0_rgba(0,0,0,0.3)]">
+
+            {/* NAME INPUT */}
+            <input type='text' value={name} onChange={(e) => setName(e.target.value)} placeholder="Name of Event...." className="w-[80%] h-20 border-blue-500 border-2 px-6 rounded-2xl"/>
+
+            {/* UPLOAD BODY */}
+            <div className="flex items-center justify-center text-center gap-4 h-full w-full">
+
+              {/* UPLOAD IMAGE ASSET */}
+              <div className="flex flex-col items-center justify-around h-[80%] w-[40%] relative">
+
+                {preview ? (
+                  <div className="object-cover h-[80%] w-[w-80%]">
+                    <img
+                      src={preview}
+                      alt="Preview"
+                      style={{ marginTop: "20px" }}
+                    />
+                  </div>
+                ) : (
+                  <div className="h-[80%] w-[80%] border-3 border-white border-solid rounded-2xl flex justify-center items-center">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                  </div>
+                )}
+
+                {/* Hidden file input */}
+                <input
+                  ref={inputRef}
+                  type="file"
+                  id="file-upload"
+                  className="hidden"
+                  accept="image/*"
+                  onChange={(e) => setFile(e.target.files[0])}
+                />
+
+                {!preview && (
+                  <button onClick={handleInput} className="bg-gradient-to-br from-cyan-400 to-blue-500 font-bold w-[80%] py-4 text-white text-center rounded-lg cursor-pointer transition-all duration-300 items-center gap-2 hover:-translate-y-0.5 hover:shadow-[0_4px_15px_rgba(34,211,238,0.3)] mt-2">
+                    Select Files
+                  </button>
+                )}
+              </div>
+
+              {/* ADD PLAYERS */}
+              {preview && (
+                <div className="flex flex-col justify-around items-center w-[60%]">
+
+                  <div className="h-40 w-full relative">
+                    <div className="h-10 w-10 bg-gradient-to-br from-cyan-400 to-blue-500 text-white flex justify-center items-center absolute top-[40%]">&#60;</div>
+                    <div className="h-10 w-10 bg-gradient-to-br from-cyan-400 to-blue-500 text-white flex justify-center items-center absolute top-[40%] right-0">&#62;</div>
+                  </div>
+
+                  {/* ADD PLAYER BTN */}
+                  {/* Hidden input */}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    ref={playerRef}
+                    onChange={handleFileChange}
+                    style={{ display: "none" }}
+                  />
+                  <div
+
+                    className="bg-gradient-to-br from-cyan-400 to-blue-500 text-white font-bold px-6 py-2.5 rounded-lg cursor-pointer transition-all duration-300 inline-flex items-center gap-2 hover:-translate-y-0.5 hover:shadow-[0_4px_15px_rgba(34,211,238,0.3)] mt-2">Add Player</div>
+                </div>
+              )}
+
+            </div>
+
+            {/* SUBMIT BUTTON */}
+            {preview && (
+              <button onClick={handleSubmit} className="mt-16 bg-gradient-to-br from-cyan-400 to-blue-500 font-bold w-[80%] py-4 text-white text-center rounded-lg cursor-pointer transition-all duration-300 items-center gap-2 hover:-translate-y-0.5 hover:shadow-[0_4px_15px_rgba(34,211,238,0.3)]">
+                Submit
+              </button>
+            )}
+
           </div>
-          <h2 className="text-2xl font-bold text-white mb-2">Media Library Pipeline</h2>
-          <p className="text-slate-400 max-w-md">
-            This module is currently connected to the GuardianAI backend pipeline. Official assets will be populated here as they are processed through the computer vision hashing system.
-          </p>
-        </div>
-      </main>
-    </div>
+        ) : (state == 'loading') ? (
+          <div className="flex items-center justify-center min-h-screen">
+            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        ) : (
+          <div className="flex-1 bg-[#0f172a]/60 backdrop-blur-[12px] border border-white/10 rounded-2xl p-12 flex flex-col items-center justify-center gap-2 text-center shadow-[0_8px_32px_0_rgba(0,0,0,0.3)]">
+            {footprints.map((item) => (
+              <Link key={item.id} className="w-[80%] h-20 bg-blue-500 flex justify-center items-center rounded-2xl" href={`/media/${item.id}`}>
+                {item.name}
+              </Link>
+            ))}
+          </div>
+        )
+        }
+
+      </main >
+    </div >
   );
 }

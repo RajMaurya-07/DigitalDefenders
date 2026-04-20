@@ -2,6 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "../../lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../../lib/firebase";
+import { addDoc } from "firebase/firestore";
+import { onSnapshot, collection, query, orderBy } from "firebase/firestore";
 
 const platforms = {
 
@@ -33,28 +40,66 @@ const platforms = {
     icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
   }
 };
-
-const DUMMY_USERS = [
-  { name: "Alex Mercer", handle: "@amercer44", color: "bg-teal-500" },
-  { name: "Sarah Jenkins", handle: "@s_jenkins", color: "bg-rose-500" },
-  { name: "SportsFanatic99", handle: "@sports_fanatic99", color: "bg-cyan-500" },
-  { name: "Dave Highlights", handle: "@dave_clips", color: "bg-amber-500" }
-];
-
 export default function SocialSimulator() {
   const router = useRouter();
   const [activePlatform, setActivePlatform] = useState("chirp");
   const [feed, setFeed] = useState([]);
   const [postText, setPostText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [selectedImage, setSelectedImage] = useState(false);
-  
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [name, setName] = useState('User');
+  const [email, setEmail] = useState('user@gmail.com');
+
   const current = platforms[activePlatform];
 
-  const handleFileSelect = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setSelectedImage(true);
-    }
+  // CURRENT USER DATA
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+
+      setEmail(user.email);
+
+      const docRef = doc(db, "users", user.uid);
+      const snap = await getDoc(docRef);
+      const userData = snap.exists() ? snap.data() : {};
+
+      setName(userData.name);
+    });
+
+    return () => unsub();
+  }, []);
+
+  // FEED
+  useEffect(() => {
+    const q = query(collection(db, "posts"), orderBy("createdAt", "desc"));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const postsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setFeed(postsData);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // UPLOAD IMAGE
+  const uploadToCloudinary = async (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("upload_preset", process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET);
+
+    const res = await fetch(
+      `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/image/upload`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    const data = await res.json();
+    return data.secure_url; // 🔥 important
   };
 
   const handleUploadSubmit = async (e) => {
@@ -63,64 +108,39 @@ export default function SocialSimulator() {
 
     setLoading(true);
 
-    // ==========================================
-    // TO-DO: BACKEND NODE.JS POST UPLOAD
-    // Replace simulation with API POST
-    // ==========================================
+    let imageUrl = null;
 
-    setTimeout(() => {
-      setLoading(false);
-      
-      const newPost = {
-        id: Date.now(),
-        user: DUMMY_USERS[Math.floor(Math.random() * DUMMY_USERS.length)],
-        time: "Just now",
-        text: postText || (selectedImage ? "Check out this visual!" : "Just updating my status."),
-        hasImage: selectedImage,
-        stats: {
-          replies: Math.floor(Math.random() * 20) + 1,
-          reposts: Math.floor(Math.random() * 50) + 1,
-          likes: Math.floor(Math.random() * 900) + 10
-        }
-      };
+    if (selectedImage) {
+      imageUrl = await uploadToCloudinary(selectedImage);
+    }
+    // Save to Firestore
+    await addDoc(collection(db, "posts"), {
+      text: postText,
+      imageUrl: imageUrl || null, // already URL from IKUpload
+      createdAt: new Date(),
+      user: name,
+      email: email,
+    });
 
-      setFeed(prev => [newPost, ...prev]);
-      setPostText("");
-      setSelectedImage(false);
+    setLoading(false);
+    setPostText("");
+    setSelectedImage(null);
 
-      if (selectedImage) {
-        // Dispatch EVENT to GuardianAI Admin Dashboard to trigger detection logic!
-        window.dispatchEvent(new CustomEvent("NEW_ALERT"));
-      }
-    }, 1500);
   };
 
   return (
     <div className="min-h-screen bg-[#F0F2F5] text-slate-900 transition-colors duration-500 flex flex-col font-sans">
-      
+
       {/* Top Navigation */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
-          
+
           <div className={`flex items-center gap-2 font-bold text-xl ${current.themeText} transition-colors`}>
             {current.icon}
             {current.name} Web
           </div>
 
-          <div className="flex bg-slate-100/80 rounded-lg p-1 border border-slate-200/50">
-            {Object.keys(platforms).map(key => (
-              <button 
-                type="button"
-                key={key}
-                onClick={() => setActivePlatform(key)}
-                className={`px-5 py-1.5 text-sm font-bold rounded-md transition-all duration-300 ${activePlatform === key ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700"}`}
-              >
-                {platforms[key].name}
-              </button>
-            ))}
-          </div>
-
-          <button type="button" className="text-sm font-bold text-slate-500 hover:text-rose-500 transition-colors uppercase tracking-wide" onClick={() => router.push("/login")}>
+          <button type="button" className="text-sm font-bold text-slate-500 hover:text-rose-500 transition-colors uppercase tracking-wide" onClick={() => router.push("/")}>
             Exit Sim
           </button>
         </div>
@@ -128,7 +148,7 @@ export default function SocialSimulator() {
 
       {/* Main Content */}
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-8 grid grid-cols-1 md:grid-cols-3 gap-8 relative">
-        
+
         {/* Left Column - User Profile & Upload */}
         <div className="md:col-span-1 flex flex-col gap-6">
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative">
@@ -138,8 +158,8 @@ export default function SocialSimulator() {
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-slate-400"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
               </div>
               <div className="text-center mt-3">
-                <h2 className="font-bold text-xl text-slate-800">Test User</h2>
-                <p className="text-slate-500 text-sm font-medium">@demo_account_01</p>
+                <h2 className="font-bold text-xl text-slate-800">{name}</h2>
+                <p className="text-slate-500 text-sm font-medium">{email}</p>
               </div>
               <div className="mt-4 flex justify-around text-center border-t border-slate-100 pt-4">
                 <div><div className={`font-bold ${current.themeText}`}>124</div><div className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Posts</div></div>
@@ -152,12 +172,12 @@ export default function SocialSimulator() {
           <form className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col gap-4" onSubmit={handleUploadSubmit}>
             <div className="flex items-center gap-3 mb-1">
               <div className={`w-8 h-8 rounded-full ${current.themeLight} flex items-center justify-center ${current.themeText}`}>
-                 {current.icon}
+                {current.icon}
               </div>
               <h3 className="font-bold text-slate-800 text-lg">Create Post</h3>
             </div>
-            
-            <textarea 
+
+            <textarea
               placeholder={`What's happening on ${current.name}?`}
               value={postText}
               onChange={e => setPostText(e.target.value)}
@@ -166,22 +186,22 @@ export default function SocialSimulator() {
             ></textarea>
 
             <div onClick={() => document.getElementById('post-image').click()} className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all duration-300 ${selectedImage ? `border-emerald-400 bg-emerald-50 text-emerald-600` : `border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-500`}`}>
-               {selectedImage ? (
-                  <>
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <span className="text-sm font-bold">Image Attached</span>
-                  </>
-               ) : (
-                  <>
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
-                    <span className="text-sm font-bold">Attach Image</span>
-                  </>
-               )}
-              <input type="file" id="post-image" className="hidden" accept="image/*" onChange={handleFileSelect} />
+              {selectedImage ? (
+                <>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span className="text-sm font-bold">Image Attached</span>
+                </>
+              ) : (
+                <>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                  <span className="text-sm font-bold">Attach Image</span>
+                </>
+              )}
+              <input type="file" id="post-image" className="hidden" accept="image/*" onChange={(e) => setSelectedImage(e.target.files[0])} />
             </div>
 
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={loading || (!postText && !selectedImage)}
               className={`w-full text-white font-bold py-3.5 rounded-xl transition-all duration-300 flex items-center justify-center shadow-md ${current.themePrimary} ${current.themeHover} disabled:opacity-50 disabled:shadow-none hover:-translate-y-0.5`}
             >
@@ -195,75 +215,81 @@ export default function SocialSimulator() {
         <div className="md:col-span-2 flex flex-col gap-6">
           <div className="flex items-center justify-between bg-white rounded-xl shadow-sm border border-slate-200 p-4">
             <h2 className="font-bold text-xl flex items-center gap-2 text-slate-800">
-               Timeline
+              Timeline
             </h2>
             <div className={`text-xs font-bold px-3 py-1 rounded-full ${current.themeLight} ${current.themeText}`}>
-               {current.name} Engine
+              {current.name} Engine
             </div>
           </div>
 
+          {/* POST FEED */}
+
           <div className="flex flex-col gap-5">
             {feed.length === 0 ? (
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-16 flex flex-col items-center justify-center text-center gap-4">
-                <div className={`w-20 h-20 rounded-full flex items-center justify-center ${current.themeLight} ${current.themeText}`}>
-                  {current.icon}
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-800 text-xl">No posts yet</h3>
-                  <p className="text-slate-500 text-base mt-2 max-w-sm mx-auto leading-relaxed">
-                    Upload an image using the panel to simulate spreading content across the web. GuardianAI will catch it instantly.
-                  </p>
-                </div>
-              </div>
+              <div className="text-center text-slate-500">No posts yet</div>
             ) : (
               feed.map((post) => (
-                <div key={post.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow">
-                  <div className="p-5 flex gap-4">
-                    <div className={`w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold text-lg shadow-sm ${post.user.color}`}>
-                       {post.user.name.charAt(0)}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-bold text-slate-900 text-[15px] hover:underline cursor-pointer">{post.user.name}</span>
-                        <span className="text-sm font-medium text-slate-500">{post.user.handle}</span>
-                        <span className="text-sm text-slate-400">· {post.time}</span>
-                      </div>
-                      <p className="text-slate-800 text-[15px] leading-relaxed mt-1 whitespace-pre-wrap">{post.text}</p>
-                      
-                      {post.hasImage && (
-                        <div className="mt-4 rounded-xl overflow-hidden border border-slate-200 bg-slate-50 aspect-video relative flex-1 cursor-pointer">
-                          <span className="absolute inset-0 flex items-center justify-center text-slate-400 text-sm font-bold uppercase tracking-widest bg-gradient-to-br from-slate-50 to-slate-100">
-                             Simulated Media Asset
-                          </span>
-                        </div>
-                      )}
+                <Link
+                  href={`/simulator/${post.id}`}
+                  key={post.id}
+                  className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex gap-4 hover:shadow-md transition"
+                >
+                  {/* Avatar */}
+                  <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center">
+                    <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="7" r="4" />
+                      <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
+                    </svg>
+                  </div>
 
-                      <div className="flex items-center justify-between text-slate-500 mt-4 max-w-md pr-10">
-                        <button className={`flex items-center gap-2 group transition-colors`}>
-                          <div className={`p-2 rounded-full group-hover:${current.themeLight} transition-colors`}>
-                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`group-hover:${current.themeText}`}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
-                          </div>
-                          <span className={`text-xs font-semibold group-hover:${current.themeText}`}>{post.stats.replies}</span>
-                        </button>
-                        <button className="flex items-center gap-2 group transition-colors">
-                          <div className="p-2 rounded-full group-hover:bg-emerald-50 transition-colors">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="group-hover:text-emerald-500"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
-                          </div>
-                          <span className="text-xs font-semibold group-hover:text-emerald-500">{post.stats.reposts}</span>
-                        </button>
-                        <button className="flex items-center gap-2 group transition-colors">
-                          <div className="p-2 rounded-full group-hover:bg-rose-50 transition-colors">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="group-hover:text-rose-500"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                          </div>
-                          <span className="text-xs font-semibold group-hover:text-rose-500">{post.stats.likes}</span>
-                        </button>
-                      </div>
+                  {/* Content */}
+                  <div className="flex-1">
+                    {/* User info */}
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-800">
+                        {post.user || "User"}
+                      </span>
+                      <span className="text-sm text-slate-500">
+                        {post.email}
+                      </span>
+                    </div>
+
+                    {/* Text */}
+                    {post.text && (
+                      <p className="text-slate-800 mt-1 whitespace-pre-wrap">
+                        {post.text}
+                      </p>
+                    )}
+
+                    {/* Image */}
+                    {post.imageUrl && (
+                      <img
+                        src={post.imageUrl}
+                        alt="post"
+                        className="mt-3 rounded-xl border border-slate-200 max-h-96 object-cover w-full"
+                      />
+                    )}
+
+                    {/* Actions */}
+                    <div className="flex justify-between mt-4 max-w-md text-slate-500">
+                      <button className="flex items-center gap-2 hover:text-blue-500">
+                        💬 <span className="text-sm">Comment</span>
+                      </button>
+
+                      <button className="flex items-center gap-2 hover:text-emerald-500">
+                        🔁 <span className="text-sm">Share</span>
+                      </button>
+
+                      <button className="flex items-center gap-2 hover:text-rose-500">
+                        ❤️ <span className="text-sm">Like</span>
+                      </button>
                     </div>
                   </div>
-                </div>
+                </Link>
               ))
             )}
           </div>
+
         </div>
 
       </main>
